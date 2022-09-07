@@ -29,6 +29,7 @@ _dest _console
 '  primary:    primary# = numeric_store(i)
 'idstmt (stridstmt) - only called by assignment
 '@review:  i = find_vname&(ident) -- lots of common code, can be combined
+'@review: swap a(1), a(2) -- swap doesn't support arrays
 '------------------------------------------------------------------------
 ' QBASIC/QB64 subset interpreter by Ed Davis.
 ' This is the QB64 version of a Simple QBASIC/QB64 interpreter.
@@ -176,7 +177,6 @@ declare function peek_ch$
 declare function pop_num#
 declare function pop_str$
 declare function primary#
-declare function storeline&
 declare function strexpression$
 declare function strfactor$
 
@@ -306,7 +306,9 @@ const right_assoc = 0, left_assoc = 1, unaryminus_prec = 13, unaryplus_prec = 13
 
 dim shared ctype_arr(255) as integer
 const ct_unknown=0, ct_alpha=1, ct_digit=2, ct_period=3, ct_punc1=4
-const ct_dquote=5, ct_squote=6, ct_amp=7, ct_lt=8, ct_gt=9, ct_pound=10
+const ct_dquote=5, ct_squote=6, ct_amp=7, ct_lt=8, ct_gt=9, ct_dollar=10
+
+dim shared atarray(1000) as long
 
 '---------------------------------------------------------------------------------------------------
 ' Listed here since I can not remember them:
@@ -346,12 +348,18 @@ else
     _dest 0
 end if
 
-if cmd$ <> "" then
-  pgm(0) = "run " + cmd$
-  call initgetsym(0, 1)
-  call docmd(false)
-else
+if cmd$ = "" then
   call showhelp
+else
+  if _fileexists(cmd$) then
+    pgm(0) = "run " + chr$(34) + cmd$ + chr$(34)
+    call initgetsym(0, 1)
+    call docmd(false)
+  else
+    pgm(0) = cmd$
+    call initgetsym(0, 1)
+    call docmd(true)
+  end if
 end if
 
 if quit then call showtime: if errors then system 1 else system
@@ -483,6 +491,8 @@ sub docmd(interactive as integer)
       case "_printstring":call getsym: call printstringstmt
       case "_screenmove": call getsym: call screenmovestmt
       case "_title":      call getsym: call titlestmt
+
+      case "@":           call getsym: call atassn
 
       case "troff": call getsym: tracing  = false
       case "tron":  call getsym: tracing  = true
@@ -713,7 +723,7 @@ sub idstmt
   i = getvarindex&(left_side)
   expect("=")
   numeric_store(i) = numeric_expr#
-  if tracing then print vname, numeric_store(i)
+  if tracing then print "*** "; vname, " = "; numeric_store(i)
 end sub
 
 ' ident = expression
@@ -748,6 +758,21 @@ sub array_assignment
     numeric_arr_store(x) = n
     if tracing then print n
   end if
+end sub
+
+' array assignment: @(expr) = expr
+sub atassn
+  dim atndx, n as long
+
+  expect("(")
+  atndx = numeric_expr#
+  expect(")")
+
+  expect("=")
+
+  n = numeric_expr#
+  atarray(atndx) = n
+  if tracing then print "*** @("; atndx; ") = "; n
 end sub
 
 '------------------------------------------------------------------------
@@ -815,28 +840,36 @@ sub initvars
   str_store_max = 0: num_store_max = 0: var_names_max = 0
 end sub
 
-sub loadprog(fn as string)
+sub loadprog(fname as string)
   dim n as integer, f as long
   initvars
   clearprog
 
-  if fn = "" then curr_filename = getfn$("Program file") else curr_filename = fn
+  if fname = "" then curr_filename = getfn$("Program file") else curr_filename = fname
   if curr_filename = "" then exit sub
   if instr(curr_filename, ".") = 0 then curr_filename = curr_filename + ".bas"
+  if not _fileexists(curr_filename) then
+    print at_line$; "File "; curr_filename; " not found": errors = true
+    exit sub
+  end if
   f = freefile
   open curr_filename for input as #f
 
   n = 0
   while not eof(f)
     line input #f, pgm(0)
-    'if pgm(0) <> "" then
-      if storeline& then
-        n = the_num + 1
-      else
-        n = n + 1
-        pgm(n) = pgm(0)
-      end if
-    'end if
+    call initgetsym(0, 1)
+    if symtype = tynum and the_num > 0 and the_num <= pgmsize then
+      n = the_num
+    else
+      n = n + 1: textp = 1
+    end if
+    if pgm(n) <> "" then
+      dim s as string
+      print "line "; n; " is being overwritten, continue (y/n)": line input s
+      if s <> s then exit while
+    end if
+    pgm(n) = mid$(pgm(0), textp)
   wend
 
   close #f
@@ -852,6 +885,21 @@ sub editstmt
   call loadprog(curr_filename)
 end sub
 
+
+'    DIM ff AS INTEGER, l$
+'    ff = FREEFILE
+'    OPEN file$ FOR BINARY AS ff
+'
+'    currentLine = 0
+'    DO
+'        IF EOF(ff) THEN EXIT DO
+'        LINE INPUT #ff, l$
+'        currentLine = currentLine + 1
+'        IF currentLine > UBOUND(program) THEN REDIM _PRESERVE program(currentLine + 999) AS STRING
+'        program(currentLine) = l$
+'    LOOP
+'
+'    CLOSE ff
 ' open filename for input as [#]1
 sub openstmt
   dim fname as string, b as integer
@@ -1267,9 +1315,13 @@ sub forstmt
 end sub
 
 ' finds target, using current sym
+' bug fix: if numeric target, save and restore textp.
 function get_target&
+  dim save_textp
   if symtype = tynum then
+    save_textp = textp
     get_target = numeric_expr#
+    textp = save_textp
   else
     dim i as integer, lbl as string
     lbl = sym
@@ -1296,7 +1348,7 @@ sub gosubstmt
     gosubstack(stackp) = curline
     ' 26 May 2021 was just textp
     gosuboffstack(stackp) = textp - 1
-    'print "textp:"; textp; "=>"; pgm$(curline)
+    'print "[ "; curline; " ]"; "textp:"; textp; "=>"; pgm$(curline)
     'if sym = ":" then gosuboffstack(stackp) = textp
     call initgetsym(target, 1)
   end if
@@ -1460,7 +1512,13 @@ sub inputstmt
   if ident_type = tystrident then
     input "", st
   else
-    input "", n
+    line input st
+    if st = "" then st = "0"
+    if left$(st, 1) >= "0" and left$(st, 1) <= "9" then
+      n = val(st)
+    else
+      n = asc(st)
+    end if
   end if
 
   i = find_vname&(ident)
@@ -1751,36 +1809,51 @@ sub palettestmt
 end sub
 
 sub printstmt
-  dim val_type as integer, printed as integer
+  dim val_type, printnl, printwidth as integer, n as long, junk as string
 
-  printed = false
+  printnl = true
   if accept&(",") then print ,
   do while sym <> "" and sym <> ":" and sym <> "else"
-    printed = true
-    val_type = any_expr&(0)
+    printwidth = 0
 
-    if accept&(",") then
-      if val_type = tystring then
-        print pop_str$,
-      else
-        print pop_num#,
+    if accept("#") then
+      if symtype = tynum then
+        printwidth = the_num
       end if
-    elseif accept&(";") then
+      call getsym
+      expect(",")
+      val_type = any_expr(0)
       if val_type = tystring then
-        print pop_str$;
+        junk = pop_str
       else
-        print pop_num#;
+        n = pop_num
+        junk = ltrim$(str$(n))
       end if
+      printwidth = printwidth - len(junk)
+      if printwidth <= 0 then print junk; else print space$(printwidth); junk;
+      if accept(",") or accept(";") then printnl = false else printnl = true: exit do
     else
+      val_type = any_expr&(0)
       if val_type = tystring then
-        print pop_str$
+        junk = pop_str
       else
-        print pop_num#
+        junk = ltrim$(str$(pop_num))
       end if
-      exit do
+
+      if accept&(",") then
+        print junk,
+        printnl = false
+      elseif accept&(";") then
+        print junk;
+        printnl = false
+      else
+        print junk
+        printnl = false
+        exit do
+      end if
     end if
   loop
-  if not printed then print
+  if printnl then print
 end sub
 
 ' preset   (column, row)
@@ -1829,9 +1902,31 @@ sub returnstmt
   call initgetsym(lin, offs)
 end sub
 
-' SCREEN mode% [,[colorswitch%] [,[activepage%] [,visualpage%]]]
+' Screen [ mode ] [, [ colormode ] [, [ active_page ] [, [ visible_page ]]]]
 sub screenstmt
-  screen numeric_expr#
+  dim a, b, c, d as long
+
+  if accept&(",") then
+    if accept&(",") then
+      c = numeric_expr#
+      d = numeric_expr#
+      screen , , c, d
+    end if
+  else
+    a = numeric_expr#
+    if accept&(",") then
+      b = numeric_expr#
+      if accept&(",") then
+        c = numeric_expr#
+        if accept&(",") then
+          d = numeric_expr#
+          screen a, b, c, d
+        end if
+      end if
+    else
+      screen a
+    end if
+  end if
 end sub
 
 ' shell [string]
@@ -2192,17 +2287,6 @@ sub validlinenum(n as integer)
   if n > 0 and n <= pgmsize then exit sub
   print at_line$; "line number out of range:"; the_num: errors = true
 end sub
-
-function storeline&
-'print "storeline"
-  storeline& = false
-  call initgetsym(0, 1)
-  if symtype = tynum then
-    validlinenum(int(the_num))
-    pgm(the_num) = mid$(pgm(0), textp, len(pgm(0)) - textp + 1)
-    storeline& = true
-  end if
-end function
 
 sub clearprog
   dim i as integer
@@ -2702,6 +2786,7 @@ function strfactor$
     case "environ$":   strfactor$ = environ$(get_paren_string$)
     case "hex$":       strfactor$ = hex$(get_paren_numeric#)
     case "inkey$":     call getsym: strfactor$ = inkey$
+    case "input$":     strfactor$ = input$(get_paren_numeric#)
     case "lcase$":     strfactor$ = lcase$(get_paren_string$)
     case "left$"
       call getsym:
@@ -2844,8 +2929,9 @@ function primary#
     case "pos":   call getsym: primary# = posfun#
     case "rnd"
       call getsym
-      if sym = "(" then
-        primary# = rnd(get_paren_numeric#)
+      if accept&("(") then
+        primary# = rnd(numeric_expr#)
+        expect(")")
       else
         primary# = rnd
       end if
@@ -2916,6 +3002,10 @@ function primary#
       else
         primary# = _width
       end if
+
+    case "irnd": primary# = int(rnd * int(get_paren_numeric#)) + 1
+    case "@": primary# = atarray(get_paren_numeric#)
+
     case else
       if left$(sym, 1) = "_" then
         print "Unknown function: "; sym: errors = true: call getsym
@@ -3035,6 +3125,9 @@ function any_expr&(p as integer)
   elseif symtype = tynum or symtype = tyident or sym = "-" or sym = "+" or sym = "not" then
     push_num(primary#)
     left_type = tynum
+  elseif sym = "@" then
+    push_num(primary#)
+    left_type = tynum
   elseif sym = "" then
     print at_line$; "In expr, unexpected end-of-line found: "; pgm(curline): errors = true
   else
@@ -3127,7 +3220,8 @@ sub init_scanner
   ctype_arr(asc("?")) = ct_punc1
   ctype_arr(asc(":")) = ct_punc1
   ctype_arr(asc("#")) = ct_punc1
-  ctype_arr(asc("$")) = ct_pound
+  ctype_arr(asc("@")) = ct_punc1
+  ctype_arr(asc("$")) = ct_dollar
   ctype_arr(asc("<")) = ct_lt
   ctype_arr(asc(">")) = ct_gt
   ctype_arr(asc("&")) = ct_amp
@@ -3284,7 +3378,7 @@ sub getsym
       else
         print at_line$; "getsym: '& found, expecting 'h' but found:"; the_ch: errors = true
       end if
-    case ct_pound:
+    case ct_dollar:
       if textp = 2 then skiptoeol else goto boguschar
     case else
       boguschar:
