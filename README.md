@@ -7,6 +7,8 @@ bintfb.bas is the FreeBasic version
 
 Both interpret a QBASIC subset.
 
+Note that these are *pure* interpreters - they don't tokenize and/or create any intermediate representation.  They just interpret the source as is.
+
 bintqb running a Tiny Basic interpreter, that is itself written in GW-Basic:
 
 ![image](images/bintqbgw.png)
