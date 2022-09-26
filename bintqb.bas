@@ -5,8 +5,6 @@ $console
 $screenhide
 _dest _console
 
-'30 Jul 2022 12:39 pm: Bug! label: load: gets run as load command!!!
-'need to distinguish the difference
 '------------------------------------------------------------------------
 '  03 Jul 2021 todo
 '  [x] store/retrieve variables like eval-ed4
@@ -27,9 +25,11 @@ _dest _console
 '  swapstmt:   reference: swap(numeric_store(i1), numeric_store(i2))
 '  assignment: numeric_store(i) = value
 '  primary:    primary# = numeric_store(i)
-'idstmt (stridstmt) - only called by assignment
+'  idstmt (stridstmt) - only called by assignment
 '@review:  i = find_vname&(ident) -- lots of common code, can be combined
 '@review: swap a(1), a(2) -- swap doesn't support arrays
+'@review 30 Jul 2022 12:39 pm: label: load: gets run as load command!
+'   need to distinguish the difference commands and labels
 '------------------------------------------------------------------------
 ' QBASIC/QB64 subset interpreter by Ed Davis.
 ' This is the QB64 version of a Simple QBASIC/QB64 interpreter.
