@@ -13,6 +13,6 @@ bintqb running a Tiny Basic interpreter, that is itself written in GW-Basic:
 
 ![image](images/bintqbgw.png)
 
-Same, and now loading an running Tiny Star Trek into gw, who is being interpreted by bintqb:
+Same, and now loading and running Tiny Star Trek into gw, who is being interpreted by bintqb:
 
 ![image](images/bintqbgwstrek.png)
