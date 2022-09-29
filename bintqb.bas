@@ -2761,11 +2761,15 @@ function binary_prec&(op as string)
   end select
 end function
 
+function get_paren_numeric2#
+  expect("(")
+  get_paren_numeric2# = numeric_expr#
+  expect(")")
+end function
+
 function get_paren_numeric#
   call getsym
-  expect("(")
-  get_paren_numeric# = numeric_expr#
-  expect(")")
+  get_paren_numeric# = get_paren_numeric2#
 end function
 
 function get_paren_string$
@@ -2929,9 +2933,8 @@ function primary#
     case "pos":   call getsym: primary# = posfun#
     case "rnd"
       call getsym
-      if accept&("(") then
-        primary# = rnd(numeric_expr#)
-        expect(")")
+      if sym = "(" then
+        primary# = rnd(get_paren_numeric2#)
       else
         primary# = rnd
       end if
@@ -2967,7 +2970,7 @@ function primary#
     case "_height"
       call getsym
       if sym = "(" then
-        primary# = _height(get_paren_numeric#)
+        primary# = _height(get_paren_numeric2#)
       else
         primary# = _height
       end if
@@ -2983,8 +2986,13 @@ function primary#
     case "_mousex": call getsym: primary# = _mousex
     case "_mousey": call getsym: primary# = _mousey
     case "_newimage": call getsym: primary# = newimagefun&
-    case "_pi":   call getsym: primary# = _PI
-
+    case "_pi":
+      call getsym:
+      if sym = "(" then
+        primary# = _PI(get_paren_numeric2#)
+      else
+        primary# = _PI
+      end if
     case "_r2d":  primary# = _r2d(get_paren_numeric#)
     case "_r2g":  primary# = _r2g(get_paren_numeric#)
 
@@ -2998,7 +3006,7 @@ function primary#
     case "_width"
       call getsym
       if sym = "(" then
-        primary# = _width(get_paren_numeric#)
+        primary# = _width(get_paren_numeric2#)
       else
         primary# = _width
       end if
