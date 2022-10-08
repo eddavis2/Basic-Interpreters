@@ -1,7 +1,5 @@
 option explicit
 
-'30 Jul 2022 12:39 pm: Bug! label: load: gets run as load command!!!
-'need to distinguish the difference
 '------------------------------------------------------------------------
 '  03 Jul 2021 todo
 '  [x] store/retrieve variables like eval-ed4
@@ -24,7 +22,6 @@ option explicit
 '  primary:    primary# = numeric_store(i)
 '  idstmt (stridstmt) - only called by assignment
 '@review:  i = find_vname&(ident) -- lots of common code, can be combined
-'@review: swap a(1), a(2) -- swap doesn't support arrays
 '@review 30 Jul 2022 12:39 pm: label: load: gets run as load command!
 '   need to distinguish the difference commands and labels
 '------------------------------------------------------------------------
@@ -188,7 +185,7 @@ option explicit
 declare function accept&(s as string)
 declare function any_expr&(p as integer)
 declare function bool_expr&
-declare function fileexists%(filename as string)
+declare function _fileexists(filename as string)
 declare function numeric_expr#
 declare function numeric_expr2#(p as integer)
 declare function find_matching_else$
@@ -200,12 +197,10 @@ declare function peek_ch$
 declare function pop_num#
 declare function pop_str$
 declare function primary#
-declare function storeline&
 declare function strexpression$
 declare function strfactor$
 
 declare sub clearprog
-declare sub clearvars
 declare sub colorstmt
 declare sub docmd(interactive as integer)
 declare sub elsestmt
@@ -372,7 +367,7 @@ end if
 if cmd$ = "" then
   call showhelp
 else
-  if fileexists%(cmd$) then
+  if _fileexists(cmd$) then
     pgm(0) = "run " + chr$(34) + cmd$ + chr$(34)
     call initgetsym(0, 1)
     call docmd(false)
@@ -444,7 +439,7 @@ sub docmd(interactive as integer)
     select case sym
       case "":            exit sub
       case "bye", "quit": call getsym: call showtime:  if errors then system 1 else system
-      case "clear":       call getsym: call clearvars: exit sub
+      case "clear":       call getsym: call initvars:  exit sub
       case "edit":        call getsym: call editstmt:  exit sub
       case "help":        call getsym: call showhelp:  exit sub
       case "list":        call getsym: call liststmt:  exit sub
@@ -825,7 +820,7 @@ function getfn$(prompt as string)
   getfn$ = filespec
 end function
 
-sub clearvars
+sub initvars
   dim i as integer
 
   for i = 1 to str_store_max
@@ -835,12 +830,7 @@ sub clearvars
   for i = 1 to num_store_max
     numeric_store(i) = 0
   next
-end sub
 
-sub initvars
-  dim i as integer
-
-  clearvars
   for i = 1 to var_names_max
     var_names(i).vname = ""
     var_names(i).index = 0
@@ -857,7 +847,7 @@ sub loadprog(fname as string)
   if fname = "" then curr_filename = getfn$("Program file") else curr_filename = fname
   if curr_filename = "" then exit sub
   if instr(curr_filename, ".") = 0 then curr_filename = curr_filename + ".bas"
-  if not fileexists%(curr_filename) then
+  if not _fileexists(curr_filename) then
     print at_line$; "File "; curr_filename; " not found": errors = true
     exit sub
   end if
@@ -894,7 +884,6 @@ sub editstmt
   call loadprog(curr_filename)
 end sub
 
-
 '    DIM ff AS INTEGER, l$
 '    ff = FREEFILE
 '    OPEN file$ FOR BINARY AS ff
@@ -924,7 +913,7 @@ sub openstmt
     exit sub
   end if
   call getsym
-  if not fileexists%(fname) then
+  if not _fileexists(fname) then
     print at_line$; "File "; fname; " not found": errors = true
     exit sub
   end if
@@ -1290,6 +1279,7 @@ sub exitstmt
 end sub
 
 ' for xvar = -1.5 to 1.5 step .01
+' if step is neg, then downto
 sub forstmt
   dim xvar as integer, i as integer, fori as double, forto as double
 
@@ -1306,20 +1296,22 @@ sub forstmt
   fori = numeric_expr#
   expect("to")
   forto = numeric_expr#
-  if fori > forto then
+  numeric_store(xvar) = fori
+
+  loopp = loopp + 1
+  loopvars(loopp) = xvar
+  looplines(loopp) = curline
+  loopmax(loopp) = forto
+
+  if accept&("step") then loopstep(loopp) = numeric_expr# else loopstep(loopp) = 1
+  loopoff(loopp) = textp
+  if len(sym) > 0 then loopoff(loopp) = textp - len(sym) - 1
+
+  if (loopstep(loopp) > 0 and fori > forto) or (loopstep(loopp) < 0 and fori < forto) then
     call find_matching_pair("for", "next")
     call getsym
     if symtype = tyident then call getsym
-  else
-    numeric_store(xvar) = fori
-    loopp = loopp + 1
-    loopvars(loopp) = xvar
-    looplines(loopp) = curline
-    loopmax(loopp) = forto
-
-    if accept&("step") then loopstep(loopp) = numeric_expr# else loopstep(loopp) = 1
-    loopoff(loopp) = textp
-    if len(sym) > 0 then loopoff(loopp) = textp - len(sym) - 1
+      loopp = loopp - 1
   end if
 end sub
 
@@ -1818,12 +1810,13 @@ sub palettestmt
 end sub
 
 sub printstmt
-  dim val_type, printnl, printwidth as integer, n as long, junk as string
+  dim val_type, printnl, printwidth as integer, n as double
+  dim junk as string, p_using as string
 
   printnl = true
   if accept&(",") then print ,
   do while sym <> "" and sym <> ":" and sym <> "else"
-    printwidth = 0
+    printwidth = 0: p_using = ""
 
     if accept("#") then
       if symtype = tynum then
@@ -1833,31 +1826,60 @@ sub printstmt
       expect(",")
       val_type = any_expr(0)
       if val_type = tystring then
-        junk = pop_str
+        junk = pop_str$
       else
-        n = pop_num
-        junk = ltrim$(str$(n))
+        junk = ltrim$(str$(pop_num#))
       end if
       printwidth = printwidth - len(junk)
       if printwidth <= 0 then print junk; else print space$(printwidth); junk;
       if accept(",") or accept(";") then printnl = false else printnl = true: exit do
     else
+      if accept("using") then
+          p_using = strexpression$
+          expect(";")
+      end if
+
       val_type = any_expr&(0)
       if val_type = tystring then
-        junk = pop_str
+        junk = pop_str$
       else
-        junk = ltrim$(str$(pop_num))
+        n = pop_num#
+        junk = ltrim$(str$(n))
       end if
 
       if accept&(",") then
-        print junk,
+        if p_using <> "" then
+          if val_type = tystring then
+            print using p_using; junk;
+          else
+            print using p_using; n;
+          end if
+        else
+          print junk,
+        end if
         printnl = false
       elseif accept&(";") then
-        print junk;
+        if p_using <> "" then
+          if val_type = tystring then
+            print using p_using; junk;
+          else
+            print using p_using; n;
+          end if
+        else
+          print junk;
+        end if
         printnl = false
       else
-        print junk
-        printnl = false
+        if p_using <> "" then
+          if val_type = tystring then
+            print using p_using; junk
+          else
+            print using p_using; n
+          end if
+        else
+          print junk
+          printnl = false
+        end if
         exit do
       end if
     end if
@@ -1958,29 +1980,52 @@ sub sleepstmt
   if is_stmt_end& then sleep else sleep numeric_expr#
 end sub
 
-' swap v1, v2
+' swap v1(e), v2(e)
 sub swapstmt
   dim i1 as integer, i2 as integer
   dim symtype1 as integer, symtype2 as integer
   dim sym1 as string, sym2 as string
+  dim left_is_array as integer, right_is_array as integer
 
+  if symtype = tynum or symtype = tystring then
+    print at_line$; "Cannot swap constants: "; sym: errors = true
+    exit sub
+  end if
+
+  left_is_array = false: right_is_array = false
   sym1     = sym
   symtype1 = symtype
-  if symtype = tyident then
-    i1 = getvarindex&(left_side)
+
+  if peek_ch$ = "(" then
+      left_is_array = true
+      i1 = get_array_index&(sym1)
   else
-    i1 = getstrindex&(left_side)
+    if symtype = tyident then
+      i1 = getvarindex&(left_side)
+    else
+      i1 = getstrindex&(left_side)
+    end if
   end if
 
   expect(",")
 
+  if symtype = tynum or symtype = tystring then
+    print at_line$; "Cannot swap constants: "; sym: errors = true
+    exit sub
+  end if
+
   sym2     = sym
   symtype2 = symtype
 
-  if symtype = tyident then
-    i2 = getvarindex&(left_side)
+  if peek_ch$ = "(" then
+      right_is_array = true
+      i2 = get_array_index&(sym1)
   else
-    i2 = getstrindex&(left_side)
+    if symtype = tyident then
+      i2 = getvarindex&(left_side)
+    else
+      i2 = getstrindex&(left_side)
+    end if
   end if
 
   if symtype1 <> symtype2 then
@@ -1989,9 +2034,25 @@ sub swapstmt
   end if
 
   if symtype1 = tyident then
-    swap numeric_store(i1), numeric_store(i2)
+    if left_is_array and right_is_array then
+      swap numeric_arr_store(i1), numeric_arr_store(i2)
+    elseif left_is_array then
+      swap numeric_arr_store(i1), numeric_store(i2)
+    elseif right_is_array then
+      swap numeric_store(i1), numeric_arr_store(i2)
+    else
+      swap numeric_store(i1), numeric_store(i2)
+    end if
   else
-    swap string_store(i1), string_store(i2)
+    if left_is_array and right_is_array then
+      swap string_arr_store(i1), string_arr_store(i2)
+    elseif left_is_array then
+      swap string_arr_store(i1), string_store(i2)
+    elseif right_is_array then
+      swap string_store(i1), string_arr_store(i2)
+    else
+      swap string_store(i1), string_store(i2)
+    end if
   end if
 end sub
 
@@ -2569,11 +2630,15 @@ function binary_prec&(op as string)
   end select
 end function
 
+function get_paren_numeric2#
+  expect("(")
+  get_paren_numeric2# = numeric_expr#
+  expect(")")
+end function
+
 function get_paren_numeric#
   call getsym
-  expect("(")
-  get_paren_numeric# = numeric_expr#
-  expect(")")
+  get_paren_numeric# = get_paren_numeric2#
 end function
 
 function get_paren_string$
@@ -2730,9 +2795,8 @@ function primary#
     case "pos":   call getsym: primary# = posfun#
     case "rnd"
       call getsym
-      if accept&("(") then
-        primary# = rnd(numeric_expr#)
-        expect(")")
+      if sym = "(" then
+        primary# = rnd(get_paren_numeric2#)
       else
         primary# = rnd
       end if
@@ -3146,7 +3210,7 @@ sub initgetsym(n as long, col as integer)
   call getsym
 end sub
 
-function fileexists%(filename as string)
+function _fileexists(filename as string)
     dim f, existing as long
 
     f = freefile
@@ -3154,5 +3218,5 @@ function fileexists%(filename as string)
     existing = lof(f) > 0
     close #f
     if not existing then kill filename  ' delete empty files
-    fileexists = existing
+    _fileexists = existing
 end function
